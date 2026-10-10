@@ -230,6 +230,11 @@ class DiPlayActivity : ComponentActivity() {
         right.addView(button(getString(R.string.settings), false) { page = "settings"; render() }, matchButton())
         right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
         right.addView(label("${getString(R.string.home_public_preview)}${version()}", 12, MUTED).apply { letterSpacing = .08f })
+        right.addView(label("日产兼容适配 · https://kavvos.com", 12, MUTED).apply {
+            gravity = Gravity.CENTER
+            letterSpacing = .06f
+            setPadding(0, dp(4), 0, 0)
+        })
         if (wide) {
             // Both rows share column widths. The USB button starts at the wireless
             // card's top edge, independently of hero wrapping or font scaling.
@@ -485,6 +490,9 @@ class DiPlayActivity : ComponentActivity() {
         }
         section(content, getString(R.string.about), R.drawable.ic_dp_about) { card ->
             card.addView(button(getString(R.string.about_diplay), false) { page = "about"; render() }, matchButton(0, 60))
+            card.addView(button("日产车机适配 (kavvos.com)", false) {
+                openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com")))
+            }, matchButton(10, 60))
         }
         languageSettings(content)
     }
@@ -494,6 +502,12 @@ class DiPlayActivity : ComponentActivity() {
         content.addView(label(getString(R.string.carplay_at_home_in_your_car), 20, MUTED).apply { setPadding(0, dp(8), 0, dp(24)) })
         section(content, "${getString(R.string.about_public_preview_prefix)}${version()}") { card ->
             card.addView(label(getString(R.string.an_independent_carplay_receiver_for_android_head_units_wir), 17, TEXT))
+        }
+        section(content, "日产车机适配 / Nissan Adaptation") { card ->
+            card.addView(label("东风日产（逍客、轩逸、奇骏等）Android 9 航盛车机专用兼容版。\n适配航盛私有车载蓝牙通道 (AnwPhoneLink)、优化车载热点网络路由并修复 Android 9 音频渲染。\n\n适配者主页：https://kavvos.com", 16, TEXT))
+            card.addView(button("访问 kavvos.com", false) {
+                openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com")))
+            }, matchButton(12, 60))
         }
         section(content, getString(R.string.made_possible_by_open_source)) { card ->
             card.addView(label(getString(R.string.receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay), 16, MUTED))
@@ -911,14 +925,17 @@ class DiPlayActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT); return
         }
-        val adapter = getSystemService(BluetoothManager::class.java)?.adapter
-        if (adapter == null || !adapter.isEnabled) {
-            AlertDialog.Builder(this).setTitle(getString(R.string.turn_on_bluetooth))
-                .setMessage(getString(R.string.enable_the_car_s_bluetooth_and_pair_your_iphone_first))
-                .setPositiveButton(getString(R.string.open_bluetooth)) { _, _ -> openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
-                .setNegativeButton(getString(R.string.later), null).show(); return
+        val bt = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(this)
+        if (!bt.isEnabled()) {
+            bt.enable()
+            if (!bt.isEnabled()) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.turn_on_bluetooth))
+                    .setMessage(getString(R.string.enable_the_car_s_bluetooth_and_pair_your_iphone_first))
+                    .setPositiveButton(getString(R.string.open_bluetooth)) { _, _ -> openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+                    .setNegativeButton(getString(R.string.later), null).show(); return
+            }
         }
-        val devices = runCatching { adapter.bondedDevices.sortedBy { it.name ?: "" } }.getOrDefault(emptyList())
+        val devices = runCatching { bt.getPairedDevices().sortedBy { it.name } }.getOrDefault(emptyList())
         if (devices.isEmpty()) {
             AlertDialog.Builder(this).setTitle(getString(R.string.pair_your_iphone))
                 .setMessage(getString(R.string.on_your_iphone_open_settings_bluetooth_and_pair_with_the_c))
@@ -927,11 +944,11 @@ class DiPlayActivity : ComponentActivity() {
         }
         AlertDialog.Builder(this).setTitle(getString(R.string.choose_your_iphone))
             .setItems(devices.map { device ->
-                val name = device.name ?: getString(R.string.paired_device)
+                val name = device.name.ifBlank { getString(R.string.paired_device) }
                 if (devices.count { it.name == device.name } > 1) "$name · ${device.address.takeLast(5)}" else name
             }.toTypedArray()) { _, index ->
                 val device = devices[index]
-                DiPlayPreferences.savePhone(this, device.address, device.name ?: "iPhone")
+                DiPlayPreferences.savePhone(this, device.address, device.name.ifBlank { "iPhone" })
                 val start = pendingWireless; pendingWireless = false
                 render()
                 if (start) connect(true)

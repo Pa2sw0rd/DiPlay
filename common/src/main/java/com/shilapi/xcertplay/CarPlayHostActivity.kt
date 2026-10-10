@@ -550,7 +550,19 @@ class CarPlayHostActivity : ComponentActivity() {
             maybeStartCarPlay()
         } else {
             awaitingVpnConsent = true
-            vpnConsent.launch(consent)
+            try {
+                vpnConsent.launch(consent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                Log.w(TAG, "com.android.vpndialogs missing on this IVI unit; bypassing VPN consent", e)
+                awaitingVpnConsent = false
+                vpnReady = true
+                maybeStartCarPlay()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch VPN consent", e)
+                awaitingVpnConsent = false
+                vpnReady = true
+                maybeStartCarPlay()
+            }
         }
     }
 
@@ -933,6 +945,10 @@ class CarPlayHostActivity : ComponentActivity() {
         panel.addView(TextView(this).apply {
             text = getString(R.string.in_carplay_swipe_down_with_three_fingers_to_open_diplay_se)
             textSize = 13f; gravity = Gravity.CENTER; setTextColor(Color.rgb(168, 182, 202)); setPadding(0, dp(20), 0, 0)
+        })
+        panel.addView(TextView(this).apply {
+            text = "日产车机适配版 · https://kavvos.com"
+            textSize = 13f; gravity = Gravity.CENTER; setTextColor(Color.rgb(130, 155, 185)); setPadding(0, dp(8), 0, 0)
         })
         root.addView(panel, FrameLayout.LayoutParams(-1, -1))
         videoView = video

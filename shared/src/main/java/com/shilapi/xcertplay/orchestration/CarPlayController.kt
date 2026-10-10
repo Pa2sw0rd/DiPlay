@@ -222,7 +222,7 @@ class CarPlayController(
     @Volatile private var hotspot: WirelessHotspotManager? = null
     @Volatile private var bonjour: CarPlayBonjour? = null
     @Volatile private var bluetoothSocket: BluetoothSocket? = null
-    @Volatile private var bluetoothStream: BluetoothRfcommDuplexStream? = null
+    @Volatile private var bluetoothStream: com.shilapi.xcertplay.transport.BlockingDuplexByteStream? = null
     @Volatile private var wirelessTunnelChannel: Iap2Session? = null
     @Volatile private var wirelessIdentification: Iap2IdentificationConfig? = null
     @Volatile private var wirelessAirPlayEndpoint: Iap2WirelessCarPlayEndpoint? = null
@@ -964,7 +964,17 @@ class CarPlayController(
 
             val adapter = bluetoothAdapter
                 ?: throw IOException("Bluetooth adapter is unavailable")
-            if (!adapter.isEnabled) throw IOException("Bluetooth is not enabled")
+            val btManager = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(appContext)
+            if (!adapter.isEnabled) {
+                runCatching { adapter.enable() }
+                val deadline = System.currentTimeMillis() + 2500L
+                while (!adapter.isEnabled && System.currentTimeMillis() < deadline) {
+                    try { Thread.sleep(200) } catch (_: InterruptedException) { break }
+                }
+            }
+            if (!adapter.isEnabled && !btManager.isEnabled()) {
+                throw IOException("Bluetooth is not enabled")
+            }
             val device = selectWirelessBluetoothDevice(adapter)
             val hostBluetoothMac = accessoryBluetoothMac(adapter)
             debugLog(
@@ -1032,28 +1042,48 @@ class CarPlayController(
                 "wireless RFCOMM connecting address=${device.address} " +
                     "uuid=$IAP2_IPHONE_UUID",
             )
-            val socket = device
-                    .createRfcommSocketToServiceRecord(UUID.fromString(IAP2_IPHONE_UUID))
-                    .also { bluetoothSocket = it }
             logBluetoothConnectionSnapshot(device, "before-connect")
             val bluetoothStarted = System.nanoTime()
-            try {
-                connectBluetoothSocket(socket, device.address)
-                connectionDiagnostic("Bluetooth connect completed elapsedMs=${elapsedMillis(bluetoothStarted)}")
-            } catch (error: Throwable) {
-                connectionDiagnostic(
-                    "Bluetooth connect failed elapsedMs=${elapsedMillis(bluetoothStarted)} " +
-                        "failureClass=${diagnosticFailureClass(error)}",
-                )
-                logBluetoothConnectionSnapshot(device, "after-failure")
-                throw error
+
+            var stream: com.shilapi.xcertplay.transport.BlockingDuplexByteStream? = null
+            var connectError: Throwable? = null
+            val connectDeadline = System.currentTimeMillis() + 20000L
+            while (stream == null && System.currentTimeMillis() < connectDeadline && !isStaleWirelessRun(generation)) {
+                if (activeSession != null || wirelessActiveReported.get()) {
+                    debugLog("AirPlay session active over Wi-Fi; continuing without Bluetooth bootstrap")
+                    break
+                }
+                try {
+                    stream = btManager.openRfcommStream(device.address, IAP2_IPHONE_UUID).also {
+                        bluetoothStream = it
+                    }
+                    connectionDiagnostic("Bluetooth connect completed elapsedMs=${elapsedMillis(bluetoothStarted)}")
+                    debugLog("wireless RFCOMM connected address=${device.address}")
+                    break
+                } catch (error: Throwable) {
+                    connectError = error
+                    connectionDiagnostic(
+                        "Bluetooth connect attempt failed elapsedMs=${elapsedMillis(bluetoothStarted)} " +
+                            "failureClass=${diagnosticFailureClass(error)}",
+                    )
+                    logBluetoothConnectionSnapshot(device, "after-failure")
+                    if (activeSession != null || wirelessActiveReported.get()) break
+                    try { Thread.sleep(1500) } catch (_: InterruptedException) { break }
+                }
             }
-            debugLog("wireless RFCOMM connected address=${device.address}")
+
             if (isStaleWirelessRun(generation)) {
                 closeWirelessStack()
                 return
             }
-            val stream = BluetoothRfcommDuplexStream(socket).also { bluetoothStream = it }
+
+            if (stream == null) {
+                if (activeSession != null || wirelessActiveReported.get()) {
+                    onStatus(CarPlayStatus.WirelessActive)
+                    return
+                }
+                throw connectError ?: IOException("Failed to connect Bluetooth RFCOMM to ${device.address}")
+            }
             val channel = Iap2Session.openWireless(
                 stream,
                 traceContext = "wireless-rfcomm",
@@ -1742,12 +1772,21 @@ class CarPlayController(
             type.equals("disable-bluetooth", ignoreCase = true)
 
     private fun startWirelessHotspot(generation: Int): WirelessHotspotInfo {
-        val hotspotMode = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+        var hotspotMode = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             config.wirelessHotspotMode == WirelessHotspotMode.WIFI_P2P
         ) {
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT
         } else {
             config.wirelessHotspotMode
+        }
+        val carHotspotActive = com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(appContext) == true
+        if (carHotspotActive) {
+            if (!config.manualHotspotSsid.isNullOrBlank()) {
+                debugLog("Vehicle Wi-Fi hotspot is active; switching mode from $hotspotMode to MANUAL")
+                hotspotMode = WirelessHotspotMode.MANUAL
+            } else if (hotspotMode == WirelessHotspotMode.LOCAL_ONLY_HOTSPOT) {
+                debugLog("Vehicle Wi-Fi hotspot is active; LocalOnlyHotspot may conflict with active tethering on Android 9")
+            }
         }
         if (hotspotMode == WirelessHotspotMode.MANUAL &&
             com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(appContext) == false
@@ -1794,8 +1833,11 @@ class CarPlayController(
     private fun selectWirelessBluetoothDevice(adapter: BluetoothAdapter): BluetoothDevice {
         val bonded = adapter.bondedDevices.orEmpty()
         config.wirelessBluetoothDeviceAddress?.let { selected ->
-            return bonded.firstOrNull { it.address.equals(selected, ignoreCase = true) }
-                ?: throw IOException("The selected iPhone is no longer paired. Choose it again in DiPlay.")
+            bonded.firstOrNull { it.address.equals(selected, ignoreCase = true) }?.let { return it }
+            if (BluetoothAdapter.checkBluetoothAddress(selected)) {
+                return adapter.getRemoteDevice(selected)
+            }
+            throw IOException("The selected iPhone ($selected) is no longer valid. Choose it again in DiPlay.")
         }
         val iPhones = bonded.filter { device ->
             device.name?.contains("iPhone", ignoreCase = true) == true
@@ -1827,6 +1869,22 @@ class CarPlayController(
                 "Multiple bonded iPhones found and none is currently connected; " +
                     "connect one iPhone and retry",
             )
+        }
+        val btManager = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(appContext)
+        val hsaeConnected = btManager.getConnectedDevice()
+        if (hsaeConnected != null && BluetoothAdapter.checkBluetoothAddress(hsaeConnected.address)) {
+            Log.i(IphoneCarPlayConfiguration.TAG, "Using connected device from ${btManager.adapterName}: ${hsaeConnected.name} (${hsaeConnected.address})")
+            return adapter.getRemoteDevice(hsaeConnected.address)
+        }
+        val hsaePaired = btManager.getPairedDevices()
+        val hsaeIPhones = hsaePaired.filter { it.name.contains("iPhone", ignoreCase = true) }
+        if (hsaeIPhones.size == 1 && BluetoothAdapter.checkBluetoothAddress(hsaeIPhones.single().address)) {
+            Log.i(IphoneCarPlayConfiguration.TAG, "Using single paired iPhone from ${btManager.adapterName}: ${hsaeIPhones.single().name} (${hsaeIPhones.single().address})")
+            return adapter.getRemoteDevice(hsaeIPhones.single().address)
+        }
+        if (hsaePaired.size == 1 && BluetoothAdapter.checkBluetoothAddress(hsaePaired.single().address)) {
+            Log.i(IphoneCarPlayConfiguration.TAG, "Using single paired device from ${btManager.adapterName}: ${hsaePaired.single().name} (${hsaePaired.single().address})")
+            return adapter.getRemoteDevice(hsaePaired.single().address)
         }
         if (bonded.size == 1) return bonded.single()
         throw IOException(
@@ -1982,7 +2040,9 @@ class CarPlayController(
         } catch (_: SecurityException) {
             null
         }
-        return listOfNotNull(address, settingsAddress)
+        val btManager = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(appContext)
+        val managerAddress = btManager.localAddress(appContext)
+        return listOfNotNull(managerAddress, address, settingsAddress)
             .firstOrNull {
                 BLUETOOTH_ADDRESS.matches(it) &&
                     !it.equals(ADAPTER_ADDRESS_PLACEHOLDER, ignoreCase = true)

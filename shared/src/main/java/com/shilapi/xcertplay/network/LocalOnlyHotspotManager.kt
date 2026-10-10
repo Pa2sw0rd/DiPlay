@@ -222,7 +222,21 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
             }
         }
         // Main-loop callback delivery survives cancellation to close late reservations.
-        wifiManager.startLocalOnlyHotspot(callback, main)
+        try {
+            wifiManager.startLocalOnlyHotspot(callback, main)
+        } catch (failure: Throwable) {
+            val errorMsg = "LocalOnlyHotspot request failed: ${failure.message ?: failure.javaClass.simpleName} (car hotspot may be active)"
+            onDiagnostic(errorMsg)
+            synchronized(stateLock) {
+                startAttempt?.let {
+                    if (it.failure == null) {
+                        it.failure = IOException(errorMsg, failure)
+                        stateLock.notifyAll()
+                    }
+                }
+            }
+            throw IOException(errorMsg, failure)
+        }
         return null
     }
 
@@ -339,8 +353,12 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
             override fun onFailed(reason: Int) {
                 synchronized(stateLock) {
                     if (startAttempt === attempt && attempt.failure == null) {
+                        val reasonText = failureReason(reason)
+                        val hint = if (reason == 1 || reason == 2) {
+                            " (car native hotspot may be active; please turn it off or switch to Car hotspot mode in DiPlay settings)"
+                        } else ""
                         attempt.failure = IOException(
-                            "LocalOnlyHotspot failed: ${failureReason(reason)}",
+                            "LocalOnlyHotspot failed: $reasonText$hint",
                         )
                         stateLock.notifyAll()
                     }
@@ -620,7 +638,12 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
                 .firstNotNullOfOrNull { it.toEui64MacAddress() }
 
     private fun NetworkInterface.hotspotAddress(): InetAddress? {
-        var ipv4: InetAddress? = null
+        val ipv4 = Collections.list(inetAddresses).firstOrNull {
+            it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress &&
+                !it.isAnyLocalAddress && !it.isMulticastAddress
+        }
+        if (ipv4 != null) return ipv4
+
         for (address in Collections.list(inetAddresses)) {
             if (address is Inet6Address && address.isLinkLocalAddress) {
                 if (address.scopeId == index) return address
@@ -630,11 +653,8 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
                     continue
                 }
             }
-            if (address is Inet4Address && !address.isLoopbackAddress && ipv4 == null) {
-                ipv4 = address
-            }
         }
-        return ipv4
+        return null
     }
 
     private fun ensureStartActive(attempt: StartAttempt) {

@@ -39,14 +39,18 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
-            versionNameSuffix = "-hud-test"
+            // Keep package name as com.shihab.diplay for direct in-place installation on car
         }
         release {
             optimization {
                 enable = false
             }
-            signingConfig = signingConfigs.getByName("release")
+            val keystorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+            signingConfig = if (keystorePath != null && file(keystorePath).isFile) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {
