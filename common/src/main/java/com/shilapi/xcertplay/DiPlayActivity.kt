@@ -1042,6 +1042,13 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         content.addView(button(getString(R.string.setup_guide), false) { openSetupGuide(fromSettings = true) },
             LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(6) })
         content.addView(label(getString(R.string.setup_guide_description), 14, MUTED).apply {
+            setPadding(0, 0, 0, dp(14))
+        })
+        content.addView(button("车机蓝牙兼容性检测", false) {
+            settingsCategory = SettingsCategory.CONNECTION
+            render()
+        }, LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(6) })
+        content.addView(label("检测车机系统架构、专有蓝牙服务与无线握手通道可用性", 14, MUTED).apply {
             setPadding(0, 0, 0, dp(20))
         })
 
@@ -2124,9 +2131,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(button(getString(R.string.bluetooth_settings), false) { openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, matchButton(10, 60))
             card.addView(button(getString(R.string.wireless_connection_help), false) { wirelessHelp() }, matchButton(10, 60))
         }
-        filteredSection(content, SettingsSection.BLUETOOTH_COMPATIBILITY,
-            "车机蓝牙兼容性检测", R.drawable.ic_dp_connection) { card ->
-            renderBluetoothCompatibility(card)
+        if (settingsSectionFilter == null || settingsSectionFilter?.isEmpty() == true || settingsSectionFilter?.contains(SettingsSection.BLUETOOTH_COMPATIBILITY) == true) {
+            section(content, "车机蓝牙兼容性检测", R.drawable.ic_dp_connection) { card ->
+                renderBluetoothCompatibility(card)
+            }
         }
         if (settingsSectionFilter == null) {
             section(content, getString(R.string.about), R.drawable.ic_dp_about) { card ->
@@ -2366,6 +2374,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(button("访问发布网站 (https://kavvos.com/zh)", false) {
                 openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com/zh")))
             }, matchButton(12, 56))
+            card.addView(button("车机蓝牙兼容性检测", false) {
+                page = "settings"
+                settingsCategory = SettingsCategory.CONNECTION
+                render()
+            }, matchButton(10, 56))
 
             val qrContainer = column().apply {
                 gravity = Gravity.CENTER_HORIZONTAL
