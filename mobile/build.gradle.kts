@@ -3,9 +3,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Optional local-only input. CI and ordinary source builds contain no accessory identity.
-val localAuthenticationAssets = providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR")
-    .orNull?.let { file(it).canonicalFile }
+// Optional local-only input. Auto-detects local auth_assets if available.
+val localAuthenticationAssets = (providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull
+    ?.let { file(it) }
+    ?: rootProject.file("../auth_assets").takeIf { it.isDirectory }
+    ?: rootProject.file("auth_assets").takeIf { it.isDirectory })?.canonicalFile
 
 android {
     namespace = "com.shilapi.xcertplay"
