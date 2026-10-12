@@ -1625,7 +1625,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         panel.addView(gestureHint)
         val nissanBranding = TextView(this).apply {
-            text = "日产车机适配版 · https://kavvos.com"
+            text = "日产航盛车机适配版 · 免费获取：https://kavvos.com/zh"
             textSize = 13f
             gravity = Gravity.CENTER
             setPadding(0, dp(8), 0, 0)
