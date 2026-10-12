@@ -105,6 +105,7 @@ internal enum class SettingsSection {
     CLUSTER_MAP,
     BYD_NAVIGATION,
     PERMISSIONS_AND_HELP,
+    BLUETOOTH_COMPATIBILITY,
     LANGUAGE,
 }
 
@@ -118,6 +119,7 @@ internal object SettingsInformationArchitecture {
             SettingsSection.AUTOMATIC_CONNECTION,
             SettingsSection.BYD_ADB,
             SettingsSection.PERMISSIONS_AND_HELP,
+            SettingsSection.BLUETOOTH_COMPATIBILITY,
         ),
         SettingsCategory.DISPLAY to setOf(SettingsSection.DISPLAY_AND_PERFORMANCE),
         SettingsCategory.AUDIO to setOf(SettingsSection.AUDIO_ROUTING),
@@ -906,6 +908,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         setupError?.let { body.addView(label(it, 16, WARNING).apply { setPadding(0, dp(16), 0, 0) }) }
         content.addView(body)
+        content.addView(space(if (compact) 16 else 24))
+        content.addView(authorCommunityCard(isHome = true))
     }
 
     // Only the category scrolls, so the rail keeps showing where the driver is.
@@ -2119,47 +2123,9 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(button(getString(R.string.bluetooth_settings), false) { openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, matchButton(10, 60))
             card.addView(button(getString(R.string.wireless_connection_help), false) { wirelessHelp() }, matchButton(10, 60))
         }
-        section(content, "车机蓝牙兼容性检测", R.drawable.ic_dp_connection) { card ->
-            val btManager = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(this)
-            val isHsae = btManager.hsae.isSupported()
-            val isAndroid = btManager.android.isSupported()
-            val hsaePower = if (isHsae) runCatching { btManager.hsae.isEnabled() }.getOrDefault(false) else false
-            val androidPower = if (isAndroid) runCatching { btManager.android.isEnabled() }.getOrDefault(false) else false
-            val localMac = DiPlayBluetooth.localAddress(this) ?: btManager.localAddress(this) ?: "未获取到"
-
-            val statusText = buildString {
-                if (isHsae) {
-                    append("✅ 已识别为航盛 (HSAE) 原厂车机系统\n")
-                    append("• 适配状态：已深度兼容适配（东风日产逍客/轩逸/奇骏等）\n")
-                    append("• 蓝牙服务：航盛车规级私有服务 (com.hsae.bluetoothservice) 已就绪\n")
-                    append("• 蓝牙开关：${if (hsaePower) "已开启 (正常)" else "未开启（请在车机设置中开启蓝牙）"}\n")
-                    append("• 蓝牙地址：$localMac\n")
-                    append("• 结论：完全兼容，无线 CarPlay 引导与 Anw 握手通道可用。")
-                } else if (isAndroid) {
-                    append("ℹ️ 识别为标准 Android 蓝牙车机\n")
-                    append("• 适配状态：公版 AOSP 基础支持，未检测到航盛专有协议服务\n")
-                    append("• 蓝牙开关：${if (androidPower) "已开启" else "未开启"}\n")
-                    append("• 蓝牙地址：$localMac\n")
-                    append("• 兼容提醒：当前主要对航盛 (HSAE) 车机做了深度验证；部分非标或魔改蓝牙车机可能无法正常无线握手。若无法连接，建议进作者群交流反馈。")
-                } else {
-                    append("⚠️ 未检测到兼容的蓝牙协议栈（疑似魔改蓝牙芯片）\n")
-                    append("• 适配状态：未检测到航盛专有服务，系统原生蓝牙接口不可用\n")
-                    append("• 兼容提醒：许多老旧或后装车机魔改了独立串口蓝牙，系统无法直接调用蓝牙通信。当前软件暂未支持此类车机。\n")
-                    append("• 交流适配：可前往“关于”页面扫码进入作者抖音主页群，交流适配您的车机型号！")
-                }
-            }
-            card.addView(label(statusText, 15, if (!isHsae && !isAndroid) WARNING else TEXT))
-            card.addView(button("重新检测蓝牙状态", false) {
-                render()
-                toast("蓝牙状态检测已刷新")
-            }, matchButton(10, 56))
-            card.addView(button("打开系统蓝牙设置", false) {
-                openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
-            }, matchButton(10, 56))
-            card.addView(button("作者主页与交流群", false) {
-                page = "about"
-                render()
-            }, matchButton(10, 56))
+        filteredSection(content, SettingsSection.BLUETOOTH_COMPATIBILITY,
+            "车机蓝牙兼容性检测", R.drawable.ic_dp_connection) { card ->
+            renderBluetoothCompatibility(card)
         }
         if (settingsSectionFilter == null) {
             section(content, getString(R.string.about), R.drawable.ic_dp_about) { card ->
@@ -2173,6 +2139,300 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         languageSettings(content)
     }
 
+    private fun renderBluetoothCompatibility(card: LinearLayout) {
+        val btManager = com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager.get(this)
+        val isHsae = btManager.hsae.isSupported()
+        val isAndroid = btManager.android.isSupported()
+        val hsaePower = if (isHsae) runCatching { btManager.hsae.isEnabled() }.getOrDefault(false) else false
+        val androidPower = if (isAndroid) runCatching { btManager.android.isEnabled() }.getOrDefault(false) else false
+        val localMac = DiPlayBluetooth.localAddress(this) ?: btManager.localAddress(this) ?: "未获取到"
+
+        // 1. 顶部综合状态横幅
+        val statusColor = when {
+            isHsae -> READY
+            isAndroid -> ACCENT
+            else -> WARNING
+        }
+        val statusEmoji = when {
+            isHsae -> "✅"
+            isAndroid -> "ℹ️"
+            else -> "⚠️"
+        }
+        val statusTitle = when {
+            isHsae -> "已识别为航盛 (HSAE) 原厂车机系统"
+            isAndroid -> "已识别为标准 Android 蓝牙车机"
+            else -> "未检测到受支持的蓝牙协议栈"
+        }
+        val statusSummary = when {
+            isHsae -> "完全兼容东风日产系列车型（逍客/轩逸/奇骏等），无线 CarPlay 握手通道可用。"
+            isAndroid -> "原生 AOSP 基础支持，未检测到航盛专有协议。部分厂商魔改协议可能影响无线握手。"
+            else -> "疑似外挂独立串口蓝牙芯片，系统底层接口不可用，当前软件暂未支持无线连接。"
+        }
+
+        val banner = column().apply {
+            background = rounded(BUTTON, statusColor)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            val titleRow = row().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(label(statusEmoji, 20, statusColor).apply { setPadding(0, 0, dp(8), 0) })
+                addView(label(statusTitle, 17, statusColor, true))
+            }
+            addView(titleRow)
+            addView(label(statusSummary, 13, MUTED).apply { setPadding(dp(28), dp(4), 0, 0) })
+        }
+        card.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
+
+        // 2. 检测项与检测结果结构化对照卡片
+        fun checkItemView(
+            title: String,
+            result: String,
+            badge: String,
+            badgeColor: Int,
+            detail: String,
+        ): View = column().apply {
+            background = rounded(SURFACE, BORDER)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+
+            // 第一行：【检测项】标签 + 项目名称，右侧为状态徽章
+            val row1 = row().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                val itemTag = TextView(this@DiPlayActivity).apply {
+                    text = "检测项"
+                    textSize = 11f
+                    setTextColor(MUTED)
+                    background = rounded(BUTTON, BORDER)
+                    setPadding(dp(6), dp(2), dp(6), dp(2))
+                }
+                addView(itemTag)
+                addView(space(8), LinearLayout.LayoutParams(dp(8), 1))
+                addView(label(title, 15, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+
+                val badgeView = TextView(this@DiPlayActivity).apply {
+                    text = badge
+                    textSize = 12f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(badgeColor)
+                    background = rounded(BUTTON, badgeColor)
+                    setPadding(dp(10), dp(3), dp(10), dp(3))
+                }
+                addView(badgeView)
+            }
+            addView(row1)
+
+            // 第二行：【结 果】标签 + 结果文字
+            val row2 = row().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                val resultTag = TextView(this@DiPlayActivity).apply {
+                    text = "结 果"
+                    textSize = 11f
+                    val tagBorder = if (badgeColor == READY) READY else if (badgeColor == WARNING) WARNING else BORDER
+                    setTextColor(if (badgeColor == READY) READY else if (badgeColor == WARNING) WARNING else ACCENT)
+                    background = rounded(BUTTON, tagBorder)
+                    setPadding(dp(6), dp(2), dp(6), dp(2))
+                }
+                addView(resultTag)
+                addView(space(8), LinearLayout.LayoutParams(dp(8), 1))
+                val resultTextColor = if (badgeColor == READY) READY else TEXT
+                addView(label(result, 15, resultTextColor, true), LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
+            // 第三行：详细说明与建议
+            addView(label(detail, 12, MUTED).apply {
+                setPadding(dp(54), dp(4), 0, 0)
+            })
+        }
+
+        val itemsContainer = column()
+
+        // 检测项 1: 车机系统架构
+        itemsContainer.addView(checkItemView(
+            title = "车机系统架构",
+            result = if (isHsae) "东风日产航盛 (HSAE) 原厂系统" else if (isAndroid) "公版 Android (AOSP) 系统" else "未知 / 第三方定制车机系统",
+            badge = if (isHsae) "深度适配" else if (isAndroid) "基础支持" else "未经验证",
+            badgeColor = if (isHsae) READY else if (isAndroid) ACCENT else WARNING,
+            detail = if (isHsae) "已针对逍客、轩逸、奇骏等车型航盛车机专用适配" else if (isAndroid) "标准 Android 架构，未检测到航盛专有协议服务" else "未检测到航盛专有车规服务或 AOSP 蓝牙标准服务",
+        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+
+        // 检测项 2: 底层蓝牙服务栈
+        itemsContainer.addView(checkItemView(
+            title = "底层蓝牙服务栈",
+            result = if (isHsae) "航盛车规专有服务 (com.hsae.bluetoothservice)" else if (isAndroid) "系统原生 BluetoothAdapter 接口" else "无可用蓝牙服务 (调用失败)",
+            badge = if (isHsae || isAndroid) "正常就绪" else "不可用",
+            badgeColor = if (isHsae || isAndroid) READY else WARNING,
+            detail = if (isHsae) "航盛私有 AIDL 蓝牙后台通信接口已连接" else if (isAndroid) "公版蓝牙驱动接口正常" else "车机系统未提供标准蓝牙服务接口",
+        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+
+        // 检测项 3: 车载蓝牙开关状态
+        val btPowerOn = if (isHsae) hsaePower else androidPower
+        itemsContainer.addView(checkItemView(
+            title = "车载蓝牙开关状态",
+            result = if (isHsae || isAndroid) {
+                if (btPowerOn) "蓝牙已开启 (处于就绪工作状态)" else "蓝牙未开启 (请在车机设置中开启蓝牙)"
+            } else "无法检测开关状态",
+            badge = if (!isHsae && !isAndroid) "未知" else if (btPowerOn) "已开启" else "未开启",
+            badgeColor = if (btPowerOn && (isHsae || isAndroid)) READY else WARNING,
+            detail = if (btPowerOn) "可正常响应 iPhone 蓝牙广播与配对请求" else "车机蓝牙处于关闭状态，请先在车机设置中打开蓝牙",
+        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+
+        // 检测项 4: 车载蓝牙MAC物理地址
+        val hasMac = localMac != "未获取到"
+        itemsContainer.addView(checkItemView(
+            title = "车载蓝牙物理地址 (MAC)",
+            result = localMac,
+            badge = if (hasMac) "已获取" else "未获取",
+            badgeColor = if (hasMac) TEXT else WARNING,
+            detail = if (hasMac) "车载蓝牙硬件唯一标识，用于无线 CarPlay 初始配对引导" else "请确保车机蓝牙已开启并赋予蓝牙权限",
+        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+
+        // 检测项 5: 无线 CarPlay 握手通道
+        itemsContainer.addView(checkItemView(
+            title = "无线 CarPlay 握手通道",
+            result = if (isHsae) "航盛 AnwPhoneLink 专有通道 (支持无感连接)" else if (isAndroid) "标准 AOSP 蓝牙引导通道" else "无可用握手通道",
+            badge = if (isHsae) "完全兼容" else if (isAndroid) "需实车测试" else "暂不支持",
+            badgeColor = if (isHsae) READY else if (isAndroid) ACCENT else WARNING,
+            detail = if (isHsae) "支持点火自动连接，蓝牙广播与 WiFi 热点无缝切换" else if (isAndroid) "若连接失败，可能是车机厂商修改了蓝牙配对握手逻辑" else "外挂独立串口蓝牙芯片需定制单片机通信模块",
+        ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+
+        card.addView(itemsContainer)
+
+        // 3. 适配建议与支持提示
+        val adviceText = when {
+            isHsae -> "💡 适配建议：您的车机已完美通过航盛车规级专有协议验证。建议开启车载热点或使用公版无线引导，在主页点击“连接手机”即可畅享无线 CarPlay！"
+            isAndroid -> "💡 适配建议：检测为标准 Android 蓝牙，若实车连接时无法自动弹出 CarPlay 握手，说明厂商对蓝牙协议做了改动。欢迎加入作者抖音粉丝群反馈车机型号！"
+            else -> "💡 适配建议：检测不到系统级蓝牙服务，许多后装车机魔改了独立串口蓝牙。作者目前只对航盛车机做了深度兼容，欢迎扫码关注作者抖音，在粉丝群内交流适配您的车机型号！"
+        }
+        val adviceBox = column().apply {
+            background = rounded(BUTTON, BORDER)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            addView(label(adviceText, 13, MUTED))
+        }
+        card.addView(adviceBox, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
+
+        // 4. 操作按钮栏
+        val compact = isCompactLayout
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (!compact || isLandscape) {
+            val btnRow = row().apply {
+                val btnRefresh = button("重新检测", false) {
+                    render()
+                    toast("蓝牙状态检测已刷新")
+                }
+                addView(btnRefresh, LinearLayout.LayoutParams(0, dp(54), 1f))
+                addView(space(10), LinearLayout.LayoutParams(dp(10), 1))
+
+                val btnSettings = button("系统蓝牙设置", false) {
+                    openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                }
+                addView(btnSettings, LinearLayout.LayoutParams(0, dp(54), 1f))
+                addView(space(10), LinearLayout.LayoutParams(dp(10), 1))
+
+                val btnCommunity = button("交流群二维码", false) {
+                    page = "about"
+                    render()
+                }
+                addView(btnCommunity, LinearLayout.LayoutParams(0, dp(54), 1f))
+            }
+            card.addView(btnRow)
+        } else {
+            val btnCol = column().apply {
+                addView(button("重新检测", false) {
+                    render()
+                    toast("蓝牙状态检测已刷新")
+                }, matchButton(0, 52))
+                addView(button("系统蓝牙设置", false) {
+                    openSystem(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                }, matchButton(8, 52))
+                addView(button("交流群二维码", false) {
+                    page = "about"
+                    render()
+                }, matchButton(8, 52))
+            }
+            card.addView(btnCol)
+        }
+    }
+
+    private fun authorCommunityCard(isHome: Boolean): View {
+        val wide = resources.configuration.screenWidthDp >= 850
+        val compact = isCompactLayout
+        val card = card()
+
+        val header = row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(14))
+            addView(ImageView(this@DiPlayActivity).apply {
+                setImageResource(R.drawable.ic_dp_about)
+                imageTintList = ColorStateList.valueOf(ACCENT)
+            }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(10) })
+            addView(label("软件免费声明与车机适配交流", 20, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label("kavvos.com/zh", 13, MUTED))
+        }
+        card.addView(header)
+
+        val disclaimer = buildString {
+            append("📢 郑重声明：\n")
+            append("本软件完全免费获取，严禁任何形式的倒卖与付费传播！\n")
+            append("官方发布网站：https://kavvos.com/zh\n\n")
+            append("🚗 车机适配情况：\n")
+            append("当前版本由独立开发者 @Pa2sw0rd 针对东风日产（逍客、轩逸、奇骏等）航盛 (HSAE) 车机进行了专项适配，解决了专有蓝牙通道 (AnwPhoneLink) 与车载热点网络路由等兼容性问题。\n\n")
+            append("👥 交流与适配支持：\n")
+            append("部分品牌或老旧车机魔改了非标串口蓝牙，系统无原生接口权限。若您的车机暂不支持，欢迎扫码关注作者抖音，主页粉丝群内可交流反馈适配！")
+        }
+
+        val qrView = column().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(8), 0, dp(4))
+            addView(ImageView(this@DiPlayActivity).apply {
+                setImageResource(R.drawable.author_douyin_qrcode)
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(if (compact) 150 else 180), -2)
+            })
+            addView(label("@Pa2sw0rd 抖音号: pa2sw0rd", 14, TEXT, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(label("独立开发者 | 主页群内交流适配", 12, MUTED).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(2), 0, 0)
+            })
+        }
+
+        val actions = row().apply {
+            setPadding(0, dp(12), 0, 0)
+            val btnWebsite = button("访问发布网站", false) {
+                openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com/zh")))
+            }
+            addView(btnWebsite, LinearLayout.LayoutParams(0, dp(54), 1f))
+            addView(space(12), LinearLayout.LayoutParams(dp(12), 1))
+            val btnBt = button("车机蓝牙检测", false) {
+                page = "settings"
+                settingsCategory = SettingsCategory.CONNECTION
+                render()
+            }
+            addView(btnBt, LinearLayout.LayoutParams(0, dp(54), 1f))
+        }
+
+        if (wide && !compact) {
+            val contentRow = row().apply { gravity = Gravity.CENTER_VERTICAL }
+            val leftCol = column().apply {
+                addView(label(disclaimer, 14, TEXT))
+                addView(actions)
+            }
+            contentRow.addView(leftCol, LinearLayout.LayoutParams(0, -2, 1.4f))
+            contentRow.addView(space(28), LinearLayout.LayoutParams(dp(28), 1))
+            contentRow.addView(qrView, LinearLayout.LayoutParams(dp(210), -2))
+            card.addView(contentRow)
+        } else {
+            card.addView(label(disclaimer, 14, TEXT))
+            card.addView(actions)
+            card.addView(space(14))
+            card.addView(qrView)
+        }
+
+        return card
+    }
+
     private fun about(content: LinearLayout) {
         content.addView(label(getString(R.string.diplay), 40, TEXT, true))
         content.addView(label(getString(R.string.carplay_at_home_in_your_car), 20, MUTED).apply { setPadding(0, dp(8), 0, dp(24)) })
@@ -2180,42 +2440,9 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(label(getString(R.string.an_independent_carplay_receiver_for_android_head_units_wir), 17, TEXT))
             card.addView(updateRow())
         }
-        section(content, "软件声明与车机适配交流") { card ->
-            val disclaimer = buildString {
-                append("📢 郑重声明：\n")
-                append("本软件完全免费获取，严禁任何形式的倒卖与付费传播！\n")
-                append("官方发布网站：https://kavvos.com/zh\n\n")
-                append("🚗 车机适配情况：\n")
-                append("当前版本由独立开发者 @Pa2sw0rd 针对东风日产（逍客、轩逸、奇骏等）航盛 (HSAE) 车机进行了专项适配，解决了私有蓝牙通道 (AnwPhoneLink)、车载热点网络路由等兼容性问题。\n")
-                append("因许多其他品牌或老旧车机存在非标魔改蓝牙协议，目前仅对航盛车机做了深度兼容。\n\n")
-                append("👥 交流与适配支持：\n")
-                append("若您的车机暂不支持，或遇到魔改蓝牙导致无法无线连接的问题，欢迎关注作者抖音，主页粉丝群内可交流反馈适配！")
-            }
-            card.addView(label(disclaimer, 15, TEXT))
-            card.addView(button("访问发布网站 (https://kavvos.com/zh)", false) {
-                openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com/zh")))
-            }, matchButton(12, 56))
-
-            val qrContainer = column().apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(0, dp(16), 0, dp(8))
-                addView(ImageView(this@DiPlayActivity).apply {
-                    setImageResource(R.drawable.author_douyin_qrcode)
-                    adjustViewBounds = true
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    layoutParams = LinearLayout.LayoutParams(dp(220), -2)
-                })
-                addView(label("@Pa2sw0rd 抖音号: pa2sw0rd", 14, TEXT, true).apply {
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(10), 0, 0)
-                })
-                addView(label("独立开发者 | 主页群内可交流适配不支持的车机", 12, MUTED).apply {
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(2), 0, 0)
-                })
-            }
-            card.addView(qrContainer)
-        }
+        content.addView(authorCommunityCard(isHome = false), LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(SETTINGS_BLOCK_GAP_DP)
+        })
         section(content, getString(R.string.made_possible_by_open_source)) { card ->
             card.addView(label(getString(R.string.receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay), 16, MUTED))
         }
