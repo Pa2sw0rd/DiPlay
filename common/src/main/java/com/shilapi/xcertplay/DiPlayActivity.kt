@@ -347,6 +347,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             android.util.Log.e("DiPlaySetup", "CarPlay authentication could not be loaded", it)
             getString(R.string.setup_error_auth)
         }
+        val integrity = com.shilapi.xcertplay.security.AppIntegrityGuard.verify(this)
+        if (!integrity.isValid) {
+            setupError = "【盗版篡改警告】检测到安装包已被非法修改或二次打包：${integrity.reason}。本软件完全免费获取，严禁倒卖！"
+            handler.post { showTamperWarningDialog(integrity.reason) }
+        }
         pendingCarHotspotSetup = savedInstanceState?.getBoolean("pending_car_hotspot") ?: false
         bydVehicleAdvancedExpanded = savedInstanceState?.getBoolean("byd_vehicle_advanced") ?: false
         settingsCategory = savedInstanceState?.getString("settings_category")
@@ -2727,6 +2732,28 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             .setNegativeButton(getString(R.string.cancel), null).show()
     }
 
+    private fun showTamperWarningDialog(reason: String) {
+        if (isFinishing) return
+        appDialogBuilder()
+            .setTitle("防篡改与盗版风险提示")
+            .setMessage(
+                "检测到当前安装包已被第三方非法篡改或二次打包（$reason）。\n\n" +
+                "本项目为完全免费的日产航盛车机适配版本，作者从未授权任何第三方进行收费倒卖、去版权或二次分发。\n\n" +
+                "如果您是在闲鱼、淘宝、拼多多或车机店付费购买的此软件，您已被商家欺骗！请立即申请退款并投诉举报卖家。\n\n" +
+                "官方正版完全免费，请认准官方网站：\nhttps://kavvos.com/zh"
+            )
+            .setPositiveButton("访问官方网站 (免费正版)") { _, _ ->
+                openSystem(Intent(Intent.ACTION_VIEW, Uri.parse("https://kavvos.com/zh")))
+            }
+            .setNegativeButton("查看正版声明") { _, _ ->
+                page = "settings"
+                settingsCategory = SettingsCategory.ABOUT
+                render()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     // BYD maps the AOSP tether action to its own hotspot screen; other firmware falls back to Wi-Fi settings.
     // BYD shows that screen as a dialog and closes it unless its own settings or the car home screen is on top,
     // so the home screen goes first.
@@ -4915,6 +4942,12 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     private fun connect(wireless: Boolean) {
         startupHotspotCancelled = true
+        val integrity = com.shilapi.xcertplay.security.AppIntegrityGuard.verify(this)
+        if (!integrity.isValid) {
+            toast("检测到安装包已被篡改，已禁用连接！")
+            showTamperWarningDialog(integrity.reason)
+            return
+        }
         if (wireless && pendingCarHotspotSetup) { toast(getString(R.string.save_your_hotspot_details_in_connection_setup_first)); page = "connection"; render(); return }
         if (setupError != null) { toast(setupError!!); return }
         if (wireless && AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL &&

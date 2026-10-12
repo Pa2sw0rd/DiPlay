@@ -7,8 +7,9 @@ include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := local_hotspot_radio
-LOCAL_SRC_FILES := local_hotspot_radio.c
+LOCAL_SRC_FILES := local_hotspot_radio.c app_security.c
 LOCAL_CFLAGS := -Wall -Wextra -Werror
+LOCAL_LDLIBS := -llog
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)

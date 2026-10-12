@@ -5956,6 +5956,11 @@ internal object CarPlayBackgroundSession {
     @Synchronized
     fun store(controller: CarPlayController, sink: AndroidMediaSink, width: Int, height: Int,
         owner: Any, display: CarPlaySessionDisplay, stop: (() -> Unit) -> Unit) {
+        val context = owner as? android.content.Context
+        if (context != null && com.shilapi.xcertplay.security.AppIntegrityGuard.isTampered(context)) {
+            stop { }
+            return
+        }
         this.stopAction = stop
         this.owner = owner
         this.controller = controller

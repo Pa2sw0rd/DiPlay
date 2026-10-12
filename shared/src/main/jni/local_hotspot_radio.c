@@ -6,10 +6,15 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <linux/wireless.h>
+#include "app_security.h"
 
 JNIEXPORT jintArray JNICALL Java_com_shilapi_xcertplay_network_LegacyHotspotNative_query(JNIEnv *env, jobject self, jstring interface_name) {
     (void) self;
     jint values[3] = { EINVAL, 0, 0 };
+    if (!app_security_is_verified()) {
+        values[0] = EPERM;
+        goto result;
+    }
     if (interface_name == NULL) goto result;
     const char *name = (*env)->GetStringUTFChars(env, interface_name, NULL);
     if (name == NULL) return NULL;
